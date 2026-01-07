@@ -165,8 +165,10 @@ def load_gaia_dataset(use_raw_dataset: bool, set_to_run: str, local_dataset_file
         else:
             raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: .json, .jsonl, .parquet")
 
-        # Assume the file is a single dataset, not a DatasetDict
         eval_ds = datasets.load_dataset(file_type, data_files=str(file_path))
+        if isinstance(eval_ds, datasets.DatasetDict):
+            split_key = set_to_run if set_to_run in eval_ds.keys() else "train"
+            eval_ds = eval_ds[split_key]
     else:
         if not os.path.exists("data/gaia"):
             if use_raw_dataset:
