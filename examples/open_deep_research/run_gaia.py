@@ -146,6 +146,8 @@ def load_gaia_dataset(use_raw_dataset: bool, set_to_run: str, local_dataset_file
     def preprocess_file_paths(row):
         if len(row["file_name"]) > 0:
             row["file_name"] = f"data/gaia/{set_to_run}/" + row["file_name"]
+            if row["file_name"].endswith((".pdf", ".xls", ".xlsx")):
+                row["file_name"] = row["file_name"].rsplit(".", 1)[0] + ".png"
         return row
 
     # Load from local JSON/JSONL/Parquet file if provided
