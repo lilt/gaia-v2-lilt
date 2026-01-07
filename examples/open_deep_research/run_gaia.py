@@ -262,7 +262,11 @@ Run verification steps if that's needed, you must make sure you find the correct
         intermediate_steps = agent_memory
 
         # Check for parsing errors which indicate the LLM failed to follow the required format
-        parsing_error = True if any(["AgentParsingError" in step for step in intermediate_steps]) else False
+        # Convert ChatMessage objects to strings for checking
+        parsing_error = True if any(["AgentParsingError" in str(step) for step in intermediate_steps]) else False
+
+        # Convert ChatMessage objects to dicts for JSON serialization
+        intermediate_steps = [step.dict() if hasattr(step, 'dict') else str(step) for step in intermediate_steps]
 
         # check if iteration limit exceeded
         iteration_limit_exceeded = True if "Agent stopped due to iteration limit or time limit." in output else False
