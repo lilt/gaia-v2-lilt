@@ -54,6 +54,13 @@ def parse_args():
     parser.add_argument("--set-to-run", type=str, default="validation")
     parser.add_argument("--use-open-models", type=bool, default=False)
     parser.add_argument("--use-raw-dataset", action="store_true")
+    parser.add_argument(
+        "--local-dataset-file",
+        type=str,
+        default=None,
+        help="Path to a local JSON/JSONL/Parquet file to load instead of the GAIA dataset script. "
+        "Note: Attachment files for data entries must be in data/gaia/{set_to_run}/",
+    )
     return parser.parse_args()
 
 
@@ -134,35 +141,54 @@ def create_agent_team(model: Model, token_counts: TokenUsage):
     return manager_agent
 
 
-def load_gaia_dataset(use_raw_dataset: bool, set_to_run: str) -> datasets.Dataset:
-    if not os.path.exists("data/gaia"):
-        if use_raw_dataset:
-            snapshot_download(
-                repo_id="gaia-benchmark/GAIA",
-                repo_type="dataset",
-                local_dir="data/gaia",
-                ignore_patterns=[".gitattributes", "README.md"],
-            )
-        else:
-            # WARNING: this dataset is gated: make sure you visit the repo to require access.
-            snapshot_download(
-                repo_id="smolagents/GAIA-annotated",
-                repo_type="dataset",
-                local_dir="data/gaia",
-                ignore_patterns=[".gitattributes", "README.md"],
-            )
-
+def load_gaia_dataset(use_raw_dataset: bool, set_to_run: str, local_dataset_file: str | None = None) -> datasets.Dataset:
+    # Note: Attachment files for data entries must be in data/gaia/{set_to_run}/
     def preprocess_file_paths(row):
         if len(row["file_name"]) > 0:
             row["file_name"] = f"data/gaia/{set_to_run}/" + row["file_name"]
         return row
 
-    eval_ds = datasets.load_dataset(
-        "data/gaia/GAIA.py",
-        name="2023_all",
-        split=set_to_run,
-        # data_files={"validation": "validation/metadata.jsonl", "test": "test/metadata.jsonl"},
-    )
+    # Load from local JSON/JSONL/Parquet file if provided
+    if local_dataset_file:
+        file_path = Path(local_dataset_file)
+        if not file_path.exists():
+            raise FileNotFoundError(f"Local dataset file not found: {local_dataset_file}")
+
+        file_ext = file_path.suffix.lower()
+
+        if file_ext in [".json", ".jsonl"]:
+            file_type = "json"
+        elif file_ext == ".parquet":
+            file_type = "parquet"
+        else:
+            raise ValueError(f"Unsupported file format: {file_ext}. Supported formats: .json, .jsonl, .parquet")
+
+        # Assume the file is a single dataset, not a DatasetDict
+        eval_ds = datasets.load_dataset(file_type, data_files=str(file_path))
+    else:
+        if not os.path.exists("data/gaia"):
+            if use_raw_dataset:
+                snapshot_download(
+                    repo_id="gaia-benchmark/GAIA",
+                    repo_type="dataset",
+                    local_dir="data/gaia",
+                    ignore_patterns=[".gitattributes", "README.md"],
+                )
+            else:
+                # WARNING: this dataset is gated: make sure you visit the repo to require access.
+                snapshot_download(
+                    repo_id="smolagents/GAIA-annotated",
+                    repo_type="dataset",
+                    local_dir="data/gaia",
+                    ignore_patterns=[".gitattributes", "README.md"],
+                )
+
+        eval_ds = datasets.load_dataset(
+            "data/gaia/GAIA.py",
+            name="2023_all",
+            split=set_to_run,
+            # data_files={"validation": "validation/metadata.jsonl", "test": "test/metadata.jsonl"},
+        )
 
     eval_ds = eval_ds.rename_columns({"Question": "question", "Final answer": "true_answer", "Level": "task"})
     eval_ds = eval_ds.map(preprocess_file_paths)
@@ -288,7 +314,7 @@ def main():
     args = parse_args()
     print(f"Starting run with arguments: {args}")
 
-    eval_ds = load_gaia_dataset(args.use_raw_dataset, args.set_to_run)
+    eval_ds = load_gaia_dataset(args.use_raw_dataset, args.set_to_run, args.local_dataset_file)
     print("Loaded evaluation dataset:")
     print(pd.DataFrame(eval_ds)["task"].value_counts())
 
