@@ -105,8 +105,8 @@ def create_agent_team(model: Model, token_counts: TokenUsage):
 
     def increment_web_agent_token_counts(final_answer, memory_step, agent):
         token_counts_web = agent.monitor.get_total_token_counts()
-        token_counts.input_tokens += token_counts_web["input"]
-        token_counts.output_tokens += token_counts_web["output"]
+        token_counts.input_tokens += token_counts_web.input_tokens
+        token_counts.output_tokens += token_counts_web.output_tokens
         return True
 
     text_webbrowser_agent = ToolCallingAgent(
