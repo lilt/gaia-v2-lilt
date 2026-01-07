@@ -224,10 +224,7 @@ def answer_single_question(
     # model = InferenceClientModel(model_id="Qwen/Qwen3-32B", provider="novita", max_tokens=4096)
     document_inspection_tool = TextInspectorTool(model, 100000)
 
-    total_token_counts: TokenUsage = {
-        "input": 0,
-        "output": 0,
-    }
+    total_token_counts = TokenUsage(input_tokens=0, output_tokens=0)
     agent = create_agent_team(model, total_token_counts)
 
     augmented_question = """You have one question to answer. It is paramount that you provide a correct answer.
@@ -281,8 +278,8 @@ Run verification steps if that's needed, you must make sure you find the correct
         raised_exception = True
     end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     token_counts_manager = agent.monitor.get_total_token_counts()
-    total_token_counts.input_tokens += token_counts_manager["input"]
-    total_token_counts.output_tokens += token_counts_manager["output"]
+    total_token_counts.input_tokens += token_counts_manager.input_tokens
+    total_token_counts.output_tokens += token_counts_manager.output_tokens
     annotated_example = {
         "agent_name": model.model_id,
         "question": example["question"],
@@ -297,7 +294,7 @@ Run verification steps if that's needed, you must make sure you find the correct
         "true_answer": example["true_answer"],
         "start_time": start_time,
         "end_time": end_time,
-        "token_counts": total_token_counts,
+        "token_counts": total_token_counts.dict(),
     }
     append_answer(annotated_example, answers_file)
 
