@@ -312,7 +312,7 @@ def get_examples_to_answer(answers_file: str, eval_ds: datasets.Dataset) -> list
         print("Error when loading records: ", e)
         print("No usable records! ▶️ Starting new.")
         done_questions = []
-    return [line for line in eval_ds.to_list() if line["question"] not in done_questions and line["file_name"]]
+    return [line for line in eval_ds.to_list() if line["question"] not in done_questions]
 
 
 def main():
