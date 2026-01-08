@@ -195,9 +195,15 @@ def score_results(input_file: str, output_file: str = None):
             
             # Add results to entry if output file is specified
             if output_file is not None:
-                entry["exact_match"] = exact_match_result
-                entry["quasi_exact_match"] = quasi_exact_match_result
-                results.append(entry)
+                # Keep only scoring-related fields
+                scored_entry = {
+                    "task_id": entry.get("task_id"),
+                    "prediction": prediction,
+                    "true_answer": true_answer,
+                    "exact_match": exact_match_result,
+                    "quasi_exact_match": quasi_exact_match_result,
+                }
+                results.append(scored_entry)
     
     # Print summary statistics
     print(f"\n{'='*60}")
