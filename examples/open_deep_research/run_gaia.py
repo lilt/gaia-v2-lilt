@@ -31,8 +31,8 @@ from scripts.visual_qa import visualizer
 from tqdm import tqdm
 
 from smolagents import (
+    ApiWebSearchTool,
     CodeAgent,
-    GoogleSearchTool,
     LiteLLMModel,
     Model,
     TokenUsage,
@@ -93,7 +93,7 @@ def create_agent_team(model: Model, token_counts: TokenUsage):
     browser = SimpleTextBrowser(**BROWSER_CONFIG)
 
     WEB_TOOLS = [
-        GoogleSearchTool(provider="serper"),
+        ApiWebSearchTool(provider="exa"),
         VisitTool(browser),
         PageUpTool(browser),
         PageDownTool(browser),
@@ -120,7 +120,7 @@ def create_agent_team(model: Model, token_counts: TokenUsage):
     Ask him for all your questions that require browsing the web.
     Provide him as much context as possible, in particular if you need to search on a specific timeframe!
     And don't hesitate to provide him with a complex search task, like finding a difference between two webpages.
-    Your request must be a real sentence, not a google search! Like "Find me this information (...)" rather than a few keywords.
+    Your request must be a real sentence, not a search engine query! Like "Find me this information (...)" rather than a few keywords.
     """,
         provide_run_summary=True,
         final_answer_checks=[increment_web_agent_token_counts],
