@@ -61,6 +61,12 @@ def parse_args():
         help="Path to a local JSON/JSONL/Parquet file to load instead of the GAIA dataset script. "
         "Note: Attachment files for data entries must be in data/gaia/{set_to_run}/",
     )
+    parser.add_argument(
+        "--reasoning-effort",
+        type=str,
+        default="high",
+        help="Reasoning effort level for the model (default: 'high')",
+    )
     return parser.parse_args()
 
 
@@ -209,14 +215,14 @@ def append_answer(entry: dict, jsonl_file: str) -> None:
 
 
 def answer_single_question(
-    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool
+    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool, reasoning_effort: str = "high"
 ) -> None:
     model_params: dict[str, Any] = {
         "model_id": model_id,
         "custom_role_conversions": custom_role_conversions,
+        "reasoning_effort": reasoning_effort,
     }
     if model_id == "o1":
-        model_params["reasoning_effort"] = "high"
         model_params["max_completion_tokens"] = 8192
     else:
         model_params["max_tokens"] = 4096
@@ -328,7 +334,7 @@ def main():
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as exe:
         futures = [
-            exe.submit(answer_single_question, example, args.model_id, answers_file, visualizer)
+            exe.submit(answer_single_question, example, args.model_id, answers_file, visualizer, args.reasoning_effort)
             for example in tasks_to_run
         ]
         for f in tqdm(as_completed(futures), total=len(tasks_to_run), desc="Processing tasks"):
