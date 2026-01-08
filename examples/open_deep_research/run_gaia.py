@@ -221,11 +221,9 @@ def answer_single_question(
         "model_id": model_id,
         "custom_role_conversions": custom_role_conversions,
         "reasoning_effort": reasoning_effort,
+        "max_completion_tokens": 8192,
+        "max_tokens": 8192,
     }
-    if model_id == "o1":
-        model_params["max_completion_tokens"] = 8192
-    else:
-        model_params["max_tokens"] = 4096
     model = LiteLLMModel(**model_params)
     # model = InferenceClientModel(model_id="Qwen/Qwen3-32B", provider="novita", max_tokens=4096)
     document_inspection_tool = TextInspectorTool(model, 100000)
