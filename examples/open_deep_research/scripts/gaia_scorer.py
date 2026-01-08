@@ -1,3 +1,5 @@
+import argparse
+import json
 import re
 import string
 import warnings
@@ -35,6 +37,8 @@ def question_scorer(
     model_answer: str,
     ground_truth: str,
 ) -> bool:
+    if model_answer is None:
+        model_answer = "None"
     # if gt is a number
     if is_float(ground_truth):
         normalized_answer = normalize_number_str(str(model_answer))
@@ -122,3 +126,121 @@ def normalize_str(input_str, remove_punct=True) -> str:
         return no_spaces.lower().translate(translator)
     else:
         return no_spaces.lower()
+
+
+def exact_match(prediction: str, true_answer: str) -> bool:
+    """
+    Character-by-character exact match comparison.
+    
+    Parameters:
+    - prediction: str, the model's prediction
+    - true_answer: str, the ground truth answer
+    
+    Returns:
+    - bool, True if predictions match exactly character-by-character
+    """
+    if prediction is None:
+        prediction = "None"
+    if true_answer is None:
+        true_answer = "None"
+    return str(prediction) == str(true_answer)
+
+
+def score_results(input_file: str, output_file: str = None):
+    """
+    Score results from a JSONL file by computing exact match and quasi exact match metrics.
+    
+    Parameters:
+    - input_file: str, path to input JSONL file with 'prediction' and 'true_answer' fields
+    - output_file: str, optional path to output JSONL file with added 'exact_match' and 'quasi_exact_match' fields
+    """
+    exact_matches = 0
+    quasi_exact_matches = 0
+    total = 0
+    results = []
+    
+    with open(input_file, "r", encoding="utf-8") as f:
+        for line_num, line in enumerate(f, 1):
+            line = line.strip()
+            if not line:
+                continue
+                
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as e:
+                warnings.warn(f"Skipping invalid JSON on line {line_num}: {e}", UserWarning)
+                continue
+            
+            if "prediction" not in entry:
+                warnings.warn(f"Missing 'prediction' field on line {line_num}, skipping", UserWarning)
+                continue
+            if "true_answer" not in entry:
+                warnings.warn(f"Missing 'true_answer' field on line {line_num}, skipping", UserWarning)
+                continue
+            
+            prediction = entry["prediction"]
+            true_answer = entry["true_answer"]
+            
+            # Compute exact match
+            exact_match_result = exact_match(prediction, true_answer)
+            if exact_match_result:
+                exact_matches += 1
+            
+            # Compute quasi exact match
+            quasi_exact_match_result = question_scorer(prediction, true_answer)
+            if quasi_exact_match_result:
+                quasi_exact_matches += 1
+            
+            total += 1
+            
+            # Add results to entry if output file is specified
+            if output_file is not None:
+                # Keep only scoring-related fields
+                scored_entry = {
+                    "task_id": entry.get("task_id"),
+                    "prediction": prediction,
+                    "true_answer": true_answer,
+                    "exact_match": exact_match_result,
+                    "quasi_exact_match": quasi_exact_match_result,
+                }
+                results.append(scored_entry)
+    
+    # Print summary statistics
+    print(f"\n{'='*60}")
+    print(f"Scoring Results Summary")
+    print(f"{'='*60}")
+    print(f"Total examples: {total}")
+    print(f"\nExact Match:")
+    print(f"  Correct: {exact_matches}")
+    print(f"  Accuracy: {exact_matches/total*100:.2f}%" if total > 0 else "  Accuracy: N/A")
+    print(f"\nQuasi Exact Match:")
+    print(f"  Correct: {quasi_exact_matches}")
+    print(f"  Accuracy: {quasi_exact_matches/total*100:.2f}%" if total > 0 else "  Accuracy: N/A")
+    print(f"{'='*60}\n")
+    
+    # Write detailed results if output file is specified
+    if output_file is not None:
+        with open(output_file, "w", encoding="utf-8") as f:
+            for entry in results:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        print(f"Detailed results written to: {output_file}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Score agent results by computing exact match and quasi exact match metrics"
+    )
+    parser.add_argument(
+        "input_file",
+        type=str,
+        help="Path to input JSONL file with 'prediction' and 'true_answer' fields"
+    )
+    parser.add_argument(
+        "-o", "--output",
+        type=str,
+        default=None,
+        help="Optional path to output JSONL file with added 'exact_match' and 'quasi_exact_match' fields"
+    )
+    
+    args = parser.parse_args()
+    score_results(args.input_file, args.output)
