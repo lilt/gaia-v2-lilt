@@ -92,7 +92,7 @@ BROWSER_CONFIG = {
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent_team(model: Model, token_counts: TokenUsage):
+def create_agent_team(model: Model, search_model: Model, token_counts: TokenUsage):
     text_limit = 100000
     ti_tool = TextInspectorTool(model, text_limit)
 
@@ -106,7 +106,7 @@ def create_agent_team(model: Model, token_counts: TokenUsage):
         FinderTool(browser),
         FindNextTool(browser),
         ArchiveSearchTool(browser),
-        TextInspectorTool(model, text_limit),
+        TextInspectorTool(search_model, text_limit),
     ]
 
     def increment_web_agent_token_counts(final_answer, memory_step, agent):
@@ -116,7 +116,7 @@ def create_agent_team(model: Model, token_counts: TokenUsage):
         return True
 
     text_webbrowser_agent = ToolCallingAgent(
-        model=model,
+        model=search_model,
         tools=WEB_TOOLS,
         max_steps=20,
         verbosity_level=2,
@@ -225,11 +225,17 @@ def answer_single_question(
         "max_tokens": 8192,
     }
     model = LiteLLMModel(**model_params)
-    # model = InferenceClientModel(model_id="Qwen/Qwen3-32B", provider="novita", max_tokens=4096)
+
+    # Anthropic disallows tool_choice="required" when thinking is enabled,
+    # so use tool_choice="auto" for the search agent on Claude models.
+    search_model = model
+    if model_id.startswith("claude") or model_id.startswith("anthropic/"):
+        search_model = LiteLLMModel(**{**model_params, "tool_choice": "auto"})
+
     document_inspection_tool = TextInspectorTool(model, 100000)
 
     total_token_counts = TokenUsage(input_tokens=0, output_tokens=0)
-    agent = create_agent_team(model, total_token_counts)
+    agent = create_agent_team(model, search_model, total_token_counts)
 
     augmented_question = """You have one question to answer. It is paramount that you provide a correct answer.
 Give it all you can: I know for a fact that you have access to all the relevant tools to solve it and find the correct answer (the answer does exist).
