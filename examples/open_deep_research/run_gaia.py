@@ -226,12 +226,11 @@ def answer_single_question(
     }
     model = LiteLLMModel(**model_params)
 
-    # For Anthropic models, use tool_choice="auto" for the search agent because
-    # Anthropic disallows tool_choice="required" when thinking is enabled.
-    search_model_params = dict(model_params)
+    # Anthropic disallows tool_choice="required" when thinking is enabled,
+    # so use tool_choice="auto" for the search agent on Claude models.
+    search_model = model
     if model_id.startswith("claude") or model_id.startswith("anthropic/"):
-        search_model_params["tool_choice"] = "auto"
-    search_model = LiteLLMModel(**search_model_params)
+        search_model = LiteLLMModel(**{**model_params, "tool_choice": "auto"})
 
     document_inspection_tool = TextInspectorTool(model, 100000)
 
