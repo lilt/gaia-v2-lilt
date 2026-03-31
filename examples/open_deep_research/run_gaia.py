@@ -52,10 +52,26 @@ FATAL_ERROR_PATTERNS = [
     "insufficient_quota",
 ]
 
+# Patterns that appear in agent output/memory (not as exceptions) indicating
+# a persistent API failure that makes continuing the run pointless.
+FATAL_OUTPUT_PATTERNS = [
+    "429 too many requests",
+    "http 429",
+    "rate limit",
+]
+
 
 def is_fatal_error(exc: Exception) -> bool:
     msg = str(exc).lower()
     return any(p in msg for p in FATAL_ERROR_PATTERNS)
+
+
+def has_fatal_output(output: str, intermediate_steps: list) -> bool:
+    """Check if agent output/memory contains signs of persistent API failures (e.g. Exa 429)."""
+    text = output.lower() if output else ""
+    for step in intermediate_steps:
+        text += " " + str(step).lower()
+    return any(p in text for p in FATAL_OUTPUT_PATTERNS)
 
 
 def parse_args():
@@ -295,6 +311,15 @@ Run verification steps if that's needed, you must make sure you find the correct
         # check if iteration limit exceeded
         iteration_limit_exceeded = True if "Agent stopped due to iteration limit or time limit." in output else False
         raised_exception = False
+
+        # Check for persistent tool API failures (e.g. Exa 429) embedded in agent output
+        if has_fatal_output(output, intermediate_steps):
+            print(f"\n{'='*60}")
+            print(f"FATAL ERROR: Detected persistent API failure in agent output (e.g. Exa 429)")
+            print(f"Shutting down all workers...")
+            print(f"{'='*60}\n")
+            shutdown_event.set()
+            return
 
     except Exception as e:
         if is_fatal_error(e):
