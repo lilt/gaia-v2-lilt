@@ -46,32 +46,32 @@ login(os.getenv("HF_TOKEN"))
 append_answer_lock = threading.Lock()
 shutdown_event = threading.Event()
 
-FATAL_ERROR_PATTERNS = [
+FATAL_PATTERNS = [
+    # Anthropic API billing errors (raised as exceptions)
     "credit balance is too low to access the anthropic api",
     "insufficient_quota",
+    # Exa API errors (may surface as exceptions or in agent output/memory)
     "402 client error: payment required for url: https://api.exa.ai",
-]
-
-# Patterns that appear in agent output/memory (not as exceptions) indicating
-# a persistent API failure that makes continuing the run pointless.
-FATAL_OUTPUT_PATTERNS = [
     "http 429 too many requests",
     "http 429 rate limit",
-    "402 client error: payment required for url: https://api.exa.ai",
 ]
 
 
-def is_fatal_error(exc: Exception) -> bool:
-    msg = str(exc).lower()
-    return any(p in msg for p in FATAL_ERROR_PATTERNS)
+def _match_fatal(text: str) -> str | None:
+    """Return the matched pattern if text contains a fatal error signal, else None."""
+    text = text.lower()
+    for p in FATAL_PATTERNS:
+        if p in text:
+            return p
+    return None
 
 
-def has_fatal_output(output: str, intermediate_steps: list) -> bool:
-    """Check if agent output/memory contains signs of persistent API failures (e.g. Exa 429)."""
-    text = output.lower() if output else ""
-    for step in intermediate_steps:
-        text += " " + str(step).lower()
-    return any(p in text for p in FATAL_OUTPUT_PATTERNS)
+def _trigger_shutdown(reason: str) -> None:
+    print(f"\n{'='*60}")
+    print(f"FATAL ERROR: {reason}")
+    print(f"Shutting down all workers...")
+    print(f"{'='*60}\n")
+    shutdown_event.set()
 
 
 def parse_args():
@@ -305,6 +305,13 @@ Run verification steps if that's needed, you must make sure you find the correct
         # Convert ChatMessage objects to strings for checking
         parsing_error = True if any(["AgentParsingError" in str(step) for step in intermediate_steps]) else False
 
+        # Check for persistent tool API failures (e.g. Exa 429) embedded in agent output
+        for text in [output] + [str(step) for step in intermediate_steps]:
+            matched = _match_fatal(text)
+            if matched:
+                _trigger_shutdown(matched)
+                return
+
         # Convert ChatMessage objects to dicts for JSON serialization
         intermediate_steps = [step.dict() if hasattr(step, 'dict') else str(step) for step in intermediate_steps]
 
@@ -312,22 +319,10 @@ Run verification steps if that's needed, you must make sure you find the correct
         iteration_limit_exceeded = True if "Agent stopped due to iteration limit or time limit." in output else False
         raised_exception = False
 
-        # Check for persistent tool API failures (e.g. Exa 429) embedded in agent output
-        if has_fatal_output(output, intermediate_steps):
-            print(f"\n{'='*60}")
-            print(f"FATAL ERROR: Detected persistent API failure in agent output (e.g. Exa 429)")
-            print(f"Shutting down all workers...")
-            print(f"{'='*60}\n")
-            shutdown_event.set()
-            return
-
     except Exception as e:
-        if is_fatal_error(e):
-            print(f"\n{'='*60}")
-            print(f"FATAL ERROR: {e}")
-            print(f"Shutting down all workers...")
-            print(f"{'='*60}\n")
-            shutdown_event.set()
+        matched = _match_fatal(str(e))
+        if matched:
+            _trigger_shutdown(str(e))
             return
         print("Error on ", augmented_question, e)
         output = None
