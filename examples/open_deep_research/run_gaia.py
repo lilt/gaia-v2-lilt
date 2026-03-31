@@ -44,6 +44,34 @@ load_dotenv(override=True)
 login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
+shutdown_event = threading.Event()
+
+FATAL_PATTERNS = [
+    # Anthropic API billing errors (raised as exceptions)
+    "credit balance is too low to access the anthropic api",
+    "insufficient_quota",
+    # Exa API errors (may surface as exceptions or in agent output/memory)
+    "402 client error: payment required for url: https://api.exa.ai",
+    "http 429 too many requests",
+    "http 429 rate limit",
+]
+
+
+def _match_fatal(text: str) -> str | None:
+    """Return the matched pattern if text contains a fatal error signal, else None."""
+    text = text.lower()
+    for p in FATAL_PATTERNS:
+        if p in text:
+            return p
+    return None
+
+
+def _trigger_shutdown(reason: str) -> None:
+    print(f"\n{'='*60}")
+    print(f"FATAL ERROR: {reason}")
+    print(f"Shutting down all workers...")
+    print(f"{'='*60}\n")
+    shutdown_event.set()
 
 
 def parse_args():
@@ -215,8 +243,10 @@ def append_answer(entry: dict, jsonl_file: str) -> None:
 
 
 def answer_single_question(
-    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool, reasoning_effort: str = "high"
+    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool, reasoning_effort: str = "high",
 ) -> None:
+    if shutdown_event.is_set():
+        return
     model_params: dict[str, Any] = {
         "model_id": model_id,
         "custom_role_conversions": custom_role_conversions,
@@ -275,6 +305,13 @@ Run verification steps if that's needed, you must make sure you find the correct
         # Convert ChatMessage objects to strings for checking
         parsing_error = True if any(["AgentParsingError" in str(step) for step in intermediate_steps]) else False
 
+        # Check for persistent tool API failures (e.g. Exa 429) embedded in agent output
+        for text in [output] + [str(step) for step in intermediate_steps]:
+            matched = _match_fatal(text)
+            if matched:
+                _trigger_shutdown(matched)
+                return
+
         # Convert ChatMessage objects to dicts for JSON serialization
         intermediate_steps = [step.dict() if hasattr(step, 'dict') else str(step) for step in intermediate_steps]
 
@@ -283,6 +320,10 @@ Run verification steps if that's needed, you must make sure you find the correct
         raised_exception = False
 
     except Exception as e:
+        matched = _match_fatal(str(e))
+        if matched:
+            _trigger_shutdown(str(e))
+            return
         print("Error on ", augmented_question, e)
         output = None
         intermediate_steps = []
@@ -343,6 +384,11 @@ def main():
         ]
         for f in tqdm(as_completed(futures), total=len(tasks_to_run), desc="Processing tasks"):
             f.result()
+            if shutdown_event.is_set():
+                for pending in futures:
+                    pending.cancel()
+                print("Run stopped early due to fatal API error.")
+                break
 
     # for example in tasks_to_run:
     #     answer_single_question(example, args.model_id, answers_file, visualizer)
