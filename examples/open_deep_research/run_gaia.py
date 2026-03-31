@@ -55,7 +55,8 @@ FATAL_ERROR_PATTERNS = [
 # Patterns that appear in agent output/memory (not as exceptions) indicating
 # a persistent API failure that makes continuing the run pointless.
 FATAL_OUTPUT_PATTERNS = [
-    "429 client error: too many requests for url: https://api.exa.ai",
+    "http 429 too many requests",
+    "http 429 rate limit",
     "402 client error: payment required for url: https://api.exa.ai",
 ]
 
