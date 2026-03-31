@@ -44,6 +44,18 @@ load_dotenv(override=True)
 login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
+shutdown_event = threading.Event()
+
+FATAL_ERROR_PATTERNS = [
+    "credit balance is too low",
+    "billing",
+    "insufficient_quota",
+]
+
+
+def is_fatal_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(p in msg for p in FATAL_ERROR_PATTERNS)
 
 
 def parse_args():
@@ -215,8 +227,10 @@ def append_answer(entry: dict, jsonl_file: str) -> None:
 
 
 def answer_single_question(
-    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool, reasoning_effort: str = "high"
+    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool, reasoning_effort: str = "high",
 ) -> None:
+    if shutdown_event.is_set():
+        return
     model_params: dict[str, Any] = {
         "model_id": model_id,
         "custom_role_conversions": custom_role_conversions,
@@ -283,6 +297,13 @@ Run verification steps if that's needed, you must make sure you find the correct
         raised_exception = False
 
     except Exception as e:
+        if is_fatal_error(e):
+            print(f"\n{'='*60}")
+            print(f"FATAL ERROR: {e}")
+            print(f"Shutting down all workers...")
+            print(f"{'='*60}\n")
+            shutdown_event.set()
+            return
         print("Error on ", augmented_question, e)
         output = None
         intermediate_steps = []
@@ -343,6 +364,11 @@ def main():
         ]
         for f in tqdm(as_completed(futures), total=len(tasks_to_run), desc="Processing tasks"):
             f.result()
+            if shutdown_event.is_set():
+                for pending in futures:
+                    pending.cancel()
+                print("Run stopped early due to fatal API error.")
+                break
 
     # for example in tasks_to_run:
     #     answer_single_question(example, args.model_id, answers_file, visualizer)
