@@ -50,6 +50,8 @@ FATAL_ERROR_PATTERNS = [
     "credit balance is too low",
     "billing",
     "insufficient_quota",
+    "402 client error",
+    "payment required",
 ]
 
 # Patterns that appear in agent output/memory (not as exceptions) indicating
@@ -58,6 +60,8 @@ FATAL_OUTPUT_PATTERNS = [
     "429 too many requests",
     "http 429",
     "rate limit",
+    "402 client error",
+    "payment required",
 ]
 
 
