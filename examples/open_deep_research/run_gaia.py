@@ -65,7 +65,7 @@ TRANSIENT_API_EXCEPTIONS = (
 )
 
 # How many consecutive transient errors before we abort the experiment.
-MAX_CONSECUTIVE_TRANSIENT_ERRORS = 5
+MAX_CONSECUTIVE_TRANSIENT_ERRORS = 3
 
 
 class FatalAPIError(Exception):
