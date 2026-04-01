@@ -148,6 +148,12 @@ def parse_args():
         default="high",
         help="Reasoning effort level for the model (default: 'high')",
     )
+    parser.add_argument(
+        "--search-reasoning-effort",
+        type=str,
+        default=None,
+        help="Reasoning effort for the search agent (defaults to --reasoning-effort).",
+    )
     return parser.parse_args()
 
 
@@ -296,7 +302,8 @@ def append_answer(entry: dict, jsonl_file: str) -> None:
 
 
 def answer_single_question(
-    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool, reasoning_effort: str = "high",
+    example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool,
+    reasoning_effort: str = "high", search_reasoning_effort: str | None = None,
 ) -> None:
     if shutdown_event.is_set():
         return
@@ -309,11 +316,17 @@ def answer_single_question(
     }
     model = LiteLLMModel(**model_params)
 
-    # Anthropic disallows tool_choice="required" when thinking is enabled,
-    # so use tool_choice="auto" for the search agent on Claude models.
+    # Build search model: use separate reasoning effort if specified, and for
+    # Anthropic models set tool_choice="auto" when thinking is enabled (Anthropic
+    # disallows tool_choice="required" with thinking).
+    is_anthropic = model_id.startswith("claude") or model_id.startswith("anthropic/")
+    s_reasoning = search_reasoning_effort if search_reasoning_effort is not None else reasoning_effort
     search_model = model
-    if model_id.startswith("claude") or model_id.startswith("anthropic/"):
-        search_model = LiteLLMModel(**{**model_params, "tool_choice": "auto"})
+    if s_reasoning != reasoning_effort or (is_anthropic and s_reasoning != "none"):
+        search_model_params = {**model_params, "reasoning_effort": s_reasoning}
+        if is_anthropic and s_reasoning != "none":
+            search_model_params["tool_choice"] = "auto"
+        search_model = LiteLLMModel(**search_model_params)
 
     document_inspection_tool = TextInspectorTool(model, 100000)
 
@@ -447,7 +460,7 @@ def main():
 
     with ThreadPoolExecutor(max_workers=args.concurrency) as exe:
         futures = [
-            exe.submit(answer_single_question, example, args.model_id, answers_file, visualizer, args.reasoning_effort)
+            exe.submit(answer_single_question, example, args.model_id, answers_file, visualizer, args.reasoning_effort, args.search_reasoning_effort)
             for example in tasks_to_run
         ]
         try:
