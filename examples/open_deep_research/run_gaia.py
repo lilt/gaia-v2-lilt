@@ -304,8 +304,8 @@ def answer_single_question(
         "model_id": model_id,
         "custom_role_conversions": custom_role_conversions,
         "reasoning_effort": reasoning_effort,
-        "max_completion_tokens": 8192,
-        "max_tokens": 8192,
+        "max_completion_tokens": 16384,
+        "max_tokens": 16384,
     }
     model = LiteLLMModel(**model_params)
 
