@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import datasets
+import litellm.exceptions
 import pandas as pd
 from dotenv import load_dotenv
 from huggingface_hub import login, snapshot_download
@@ -72,6 +73,58 @@ def _trigger_shutdown(reason: str) -> None:
     print(f"Shutting down all workers...")
     print(f"{'='*60}\n")
     shutdown_event.set()
+
+# Fatal API errors that indicate misconfiguration or account issues.
+# These won't resolve by retrying, so we stop the entire experiment.
+FATAL_API_EXCEPTIONS = (
+    litellm.exceptions.AuthenticationError,      # 401: invalid API key
+    litellm.exceptions.PermissionDeniedError,     # 403: insufficient permissions
+    litellm.exceptions.NotFoundError,             # 404: invalid model/endpoint
+    litellm.exceptions.BudgetExceededError,       # budget limit hit
+)
+
+# Transient API errors that indicate server-side issues.
+# A single occurrence is normal, but repeated failures mean the service is down.
+TRANSIENT_API_EXCEPTIONS = (
+    litellm.exceptions.InternalServerError,       # 500
+    litellm.exceptions.ServiceUnavailableError,   # 503
+    litellm.exceptions.APIConnectionError,        # network errors
+    litellm.exceptions.Timeout,                   # 408/timeouts
+)
+
+# How many consecutive transient errors before we abort the experiment.
+MAX_CONSECUTIVE_TRANSIENT_ERRORS = 3
+
+
+class FatalAPIError(Exception):
+    """Raised to signal the experiment should stop immediately."""
+    pass
+
+
+# Shared state for tracking consecutive transient errors across threads.
+_transient_error_lock = threading.Lock()
+_consecutive_transient_errors = 0
+
+
+def _reset_transient_errors():
+    global _consecutive_transient_errors
+    with _transient_error_lock:
+        _consecutive_transient_errors = 0
+
+
+def _record_transient_error(error: Exception) -> bool:
+    """Record a transient error. Returns True if the threshold is exceeded."""
+    global _consecutive_transient_errors
+    with _transient_error_lock:
+        _consecutive_transient_errors += 1
+        count = _consecutive_transient_errors
+    if count >= MAX_CONSECUTIVE_TRANSIENT_ERRORS:
+        print(f"\n{'='*60}")
+        print(f"FATAL: {count} consecutive transient API errors. Service appears down.")
+        print(f"Last error: {error}")
+        print(f"{'='*60}\n")
+        return True
+    return False
 
 
 def parse_args():
@@ -319,6 +372,17 @@ Run verification steps if that's needed, you must make sure you find the correct
         iteration_limit_exceeded = True if "Agent stopped due to iteration limit or time limit." in output else False
         raised_exception = False
 
+    except FATAL_API_EXCEPTIONS as e:
+        print(f"\nFATAL API ERROR: {type(e).__name__}: {e}")
+        raise FatalAPIError(str(e)) from e
+
+    except TRANSIENT_API_EXCEPTIONS as e:
+        print(f"\nTransient API error on question: {type(e).__name__}: {e}")
+        if _record_transient_error(e):
+            raise FatalAPIError(f"Too many transient errors: {e}") from e
+        # Don't write output for transient errors — the task can be retried next run.
+        return
+
     except Exception as e:
         matched = _match_fatal(str(e))
         if matched:
@@ -331,6 +395,10 @@ Run verification steps if that's needed, you must make sure you find the correct
         iteration_limit_exceeded = False
         exception = e
         raised_exception = True
+
+    # Reset transient error counter on any successful completion (even with agent errors).
+    _reset_transient_errors()
+
     end_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     token_counts_manager = agent.monitor.get_total_token_counts()
     total_token_counts.input_tokens += token_counts_manager.input_tokens
@@ -382,13 +450,20 @@ def main():
             exe.submit(answer_single_question, example, args.model_id, answers_file, visualizer, args.reasoning_effort)
             for example in tasks_to_run
         ]
-        for f in tqdm(as_completed(futures), total=len(tasks_to_run), desc="Processing tasks"):
-            f.result()
-            if shutdown_event.is_set():
-                for pending in futures:
-                    pending.cancel()
-                print("Run stopped early due to fatal API error.")
-                break
+        try:
+            for f in tqdm(as_completed(futures), total=len(tasks_to_run), desc="Processing tasks"):
+                f.result()
+                if shutdown_event.is_set():
+                    for pending in futures:
+                        pending.cancel()
+                    print("Run stopped early due to fatal API error.")
+                    break
+        except FatalAPIError as e:
+            print(f"\nExperiment stopped: {e}")
+            print("Cancelling remaining tasks...")
+            for f in futures:
+                f.cancel()
+            return
 
     # for example in tasks_to_run:
     #     answer_single_question(example, args.model_id, answers_file, visualizer)
