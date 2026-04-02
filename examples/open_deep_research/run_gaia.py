@@ -46,6 +46,8 @@ login(os.getenv("HF_TOKEN"))
 
 append_answer_lock = threading.Lock()
 shutdown_event = threading.Event()
+skipped_tasks_count = 0
+skipped_tasks_lock = threading.Lock()
 
 FATAL_PATTERNS = [
     # Anthropic API billing errors (raised as exceptions)
@@ -305,7 +307,10 @@ def answer_single_question(
     example: dict, model_id: str, answers_file: str, visual_inspection_tool: TextInspectorTool,
     reasoning_effort: str = "high", search_reasoning_effort: str | None = None,
 ) -> None:
+    global skipped_tasks_count
     if shutdown_event.is_set():
+        with skipped_tasks_lock:
+            skipped_tasks_count += 1
         return
     model_params: dict[str, Any] = {
         "model_id": model_id,
@@ -376,6 +381,8 @@ Run verification steps if that's needed, you must make sure you find the correct
             matched = _match_fatal(text)
             if matched:
                 _trigger_shutdown(matched)
+                with skipped_tasks_lock:
+                    skipped_tasks_count += 1
                 return
 
         # Convert ChatMessage objects to dicts for JSON serialization
@@ -394,6 +401,8 @@ Run verification steps if that's needed, you must make sure you find the correct
         if _record_transient_error(e):
             raise FatalAPIError(f"Too many transient errors: {e}") from e
         # Don't write output for transient errors — the task can be retried next run.
+        with skipped_tasks_lock:
+            skipped_tasks_count += 1
         return
 
     except Exception as e:
@@ -480,7 +489,10 @@ def main():
 
     # for example in tasks_to_run:
     #     answer_single_question(example, args.model_id, answers_file, visualizer)
-    print("All tasks processed.")
+    if skipped_tasks_count > 0:
+        print(f"WARNING: {skipped_tasks_count} task(s) were skipped (transient errors, shutdown, or fatal patterns). Re-run to retry.")
+    else:
+        print("All tasks processed.")
 
 
 if __name__ == "__main__":
