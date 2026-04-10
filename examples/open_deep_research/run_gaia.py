@@ -181,7 +181,7 @@ BROWSER_CONFIG = {
 os.makedirs(f"./{BROWSER_CONFIG['downloads_folder']}", exist_ok=True)
 
 
-def create_agent_team(model: Model, search_model: Model, token_counts: TokenUsage):
+def create_agent_team(model: Model, search_model: Model, token_counts: TokenUsage, search_tool_choice: str | None = None):
     text_limit = 100000
     ti_tool = TextInspectorTool(model, text_limit)
 
@@ -223,6 +223,16 @@ def create_agent_team(model: Model, search_model: Model, token_counts: TokenUsag
     text_webbrowser_agent.prompt_templates["managed_agent"]["task"] += """You can navigate to .txt online files.
     If a non-html page is in another format, especially .pdf or a Youtube video, use tool 'inspect_file_as_text' to inspect it.
     Additionally, if after some searching you find out that you need more information to answer the question, you can use `final_answer` with your request for clarification as argument to request for more information."""
+
+    # When tool_choice is not "required" (e.g. Anthropic with thinking), the
+    # model may output plain text instead of a tool call.  Reinforce the
+    # instruction in the system prompt.
+    if search_tool_choice is not None and search_tool_choice != "required":
+        text_webbrowser_agent.prompt_templates["system_prompt"] += """
+
+  CRITICAL REMINDER: You MUST end every response with a tool call. NEVER respond with only text.
+  If you are unsure what to do, call `final_answer` with your best answer so far.
+  Plain text responses without a tool call will cause an error and waste resources."""
 
     manager_agent = CodeAgent(
         model=model,
@@ -336,7 +346,8 @@ def answer_single_question(
     document_inspection_tool = TextInspectorTool(model, 100000)
 
     total_token_counts = TokenUsage(input_tokens=0, output_tokens=0)
-    agent = create_agent_team(model, search_model, total_token_counts)
+    search_tool_choice = getattr(search_model, "kwargs", {}).get("tool_choice") if search_model is not model else None
+    agent = create_agent_team(model, search_model, total_token_counts, search_tool_choice=search_tool_choice)
 
     augmented_question = """You have one question to answer. It is paramount that you provide a correct answer.
 Give it all you can: I know for a fact that you have access to all the relevant tools to solve it and find the correct answer (the answer does exist).
