@@ -1257,6 +1257,12 @@ class ToolCallingAgent(MultiStepAgent):
         )
         return system_prompt
 
+    # Maximum number of immediate retries when the model fails to produce a
+    # valid tool call (only used when tool_choice != "required").  Retries
+    # happen *within* the same step so the failed output is NOT appended to
+    # memory, avoiding quadratic input-token growth.
+    MAX_TOOL_CALL_PARSE_RETRIES: int = 3
+
     def _step_stream(
         self, memory_step: ActionStep
     ) -> Generator[ChatMessageStreamDelta | ToolCall | ToolOutput | ActionOutput]:
@@ -1272,50 +1278,101 @@ class ToolCallingAgent(MultiStepAgent):
         # Add new step in logs
         memory_step.model_input_messages = input_messages
 
-        try:
-            if self.stream_outputs and hasattr(self.model, "generate_stream"):
-                output_stream = self.model.generate_stream(
-                    input_messages,
-                    stop_sequences=["Observation:", "Calling tools:"],
-                    tools_to_call_from=self.tools_and_managed_agents,
-                )
+        # Determine whether in-place retries are useful: only when the API
+        # does not guarantee tool calls (i.e. tool_choice is not "required").
+        model_tool_choice = getattr(self.model, "kwargs", {}).get("tool_choice")
+        can_retry_parse = model_tool_choice is not None and model_tool_choice != "required"
+        max_retries = self.MAX_TOOL_CALL_PARSE_RETRIES if can_retry_parse else 0
 
-                chat_message_stream_deltas: list[ChatMessageStreamDelta] = []
-                with Live("", console=self.logger.console, vertical_overflow="visible") as live:
-                    for event in output_stream:
-                        chat_message_stream_deltas.append(event)
-                        live.update(
-                            Markdown(agglomerate_stream_deltas(chat_message_stream_deltas).render_as_markdown())
-                        )
-                        yield event
-                chat_message = agglomerate_stream_deltas(chat_message_stream_deltas)
-            else:
-                chat_message: ChatMessage = self.model.generate(
-                    input_messages,
-                    stop_sequences=["Observation:", "Calling tools:"],
-                    tools_to_call_from=self.tools_and_managed_agents,
-                )
-                self.logger.log_markdown(
-                    content=str(chat_message.content or chat_message.raw or ""),
-                    title="Output message of the LLM:",
-                    level=LogLevel.DEBUG,
-                )
+        total_input_tokens = 0
+        total_output_tokens = 0
+        retry_messages = input_messages
 
-            # Record model output
-            memory_step.model_output_message = chat_message
-            memory_step.model_output = chat_message.content
-            memory_step.token_usage = chat_message.token_usage
-        except Exception as e:
-            raise AgentGenerationError(f"Error while generating output:\n{e}", self.logger) from e
+        for attempt in range(1 + max_retries):
+            try:
+                if self.stream_outputs and hasattr(self.model, "generate_stream"):
+                    output_stream = self.model.generate_stream(
+                        retry_messages,
+                        stop_sequences=["Observation:", "Calling tools:"],
+                        tools_to_call_from=self.tools_and_managed_agents,
+                    )
 
-        if chat_message.tool_calls is None or len(chat_message.tool_calls) == 0:
+                    chat_message_stream_deltas: list[ChatMessageStreamDelta] = []
+                    with Live("", console=self.logger.console, vertical_overflow="visible") as live:
+                        for event in output_stream:
+                            chat_message_stream_deltas.append(event)
+                            live.update(
+                                Markdown(agglomerate_stream_deltas(chat_message_stream_deltas).render_as_markdown())
+                            )
+                            yield event
+                    chat_message = agglomerate_stream_deltas(chat_message_stream_deltas)
+                else:
+                    chat_message: ChatMessage = self.model.generate(
+                        retry_messages,
+                        stop_sequences=["Observation:", "Calling tools:"],
+                        tools_to_call_from=self.tools_and_managed_agents,
+                    )
+                    self.logger.log_markdown(
+                        content=str(chat_message.content or chat_message.raw or ""),
+                        title="Output message of the LLM:",
+                        level=LogLevel.DEBUG,
+                    )
+            except Exception as e:
+                raise AgentGenerationError(f"Error while generating output:\n{e}", self.logger) from e
+
+            # Accumulate token usage across retries
+            if chat_message.token_usage:
+                total_input_tokens += chat_message.token_usage.input_tokens
+                total_output_tokens += chat_message.token_usage.output_tokens
+
+            # Model returned native tool calls – no parsing needed
+            if chat_message.tool_calls and len(chat_message.tool_calls) > 0:
+                break
+
+            # Try to parse tool calls from text output
             try:
                 chat_message = self.model.parse_tool_calls(chat_message)
+                break  # parsed successfully
             except Exception as e:
-                raise AgentParsingError(f"Error while parsing tool call from model output: {e}", self.logger)
-        else:
-            for tool_call in chat_message.tool_calls:
-                tool_call.function.arguments = parse_json_if_needed(tool_call.function.arguments)
+                if attempt < max_retries:
+                    self.logger.log(
+                        Text(
+                            f"Tool-call parse failed (attempt {attempt + 1}/{1 + max_retries}), "
+                            "retrying without storing in memory...",
+                            style="bold yellow",
+                        ),
+                        level=LogLevel.INFO,
+                    )
+                    # Append the failed output + a short nudge as transient
+                    # messages (not stored in memory) to avoid context growth.
+                    retry_messages = input_messages + [
+                        ChatMessage(
+                            role=MessageRole.ASSISTANT,
+                            content=[{"type": "text", "text": str(chat_message.content or "").strip()[:200]}],
+                        ),
+                        ChatMessage(
+                            role=MessageRole.USER,
+                            content=[{
+                                "type": "text",
+                                "text": "You must respond with a tool call, not plain text. Call the most appropriate tool now.",
+                            }],
+                        ),
+                    ]
+                else:
+                    raise AgentParsingError(
+                        f"Error while parsing tool call from model output: {e}", self.logger
+                    )
+
+        # Record model output
+        memory_step.model_output_message = chat_message
+        memory_step.model_output = chat_message.content
+        memory_step.token_usage = TokenUsage(
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+        )
+
+        for tool_call in chat_message.tool_calls:
+            tool_call.function.arguments = parse_json_if_needed(tool_call.function.arguments)
         final_answer, got_final_answer = None, False
         for output in self.process_tool_calls(chat_message, memory_step):
             yield output
