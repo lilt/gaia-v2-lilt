@@ -5,6 +5,9 @@ This repository is a fork of [huggingface/smolagents](https://github.com/hugging
 
 All experiments were run using [Open Deep Research](examples/open_deep_research/), a multi-agent system that answers complex research questions by browsing the web, inspecting files, and synthesizing answers.
 
+[1] Hofman et al., *MAPS: A Multilingual Benchmark for Global Agent Performance and Security*, EACL Findings 2026\
+[2] Mialon et al., *GAIA: A Benchmark for General AI Assistants*, ICLR 2024
+
 ## Notable changes from upstream
 
 **Search agent**
