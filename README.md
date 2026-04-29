@@ -1,7 +1,7 @@
 # GAIA-v2-LILT
 
 [**GAIA-v2-LILT** dataset](https://huggingface.co/datasets/Fujitsu-FRE/MAPS/viewer/GAIA-v2-LILT) is a re-audited version of the MAPS [1] translation of GAIA [2], using a custom review workflow that includes functional alignment, cultural alignment, and difficulty calibration for agentic tasks.
-This repository is a fork of [huggingface/smolagents](https://github.com/huggingface/smolagents) and contains code for experiments in the [GAIA-v2-LILT tech report](https://arxiv.org/pdf/2604.00000).
+This repository is a fork of [huggingface/smolagents](https://github.com/huggingface/smolagents) and contains code for experiments in the [GAIA-v2-LILT tech report](https://arxiv.org/pdf/2604.24929).
 
 All experiments were run using [Open Deep Research](examples/open_deep_research/), a multi-agent system that answers complex research questions by browsing the web, inspecting files, and synthesizing answers.
 
@@ -59,7 +59,7 @@ If you use this dataset or code, please cite our tech report:
 @article{gaia-v2-lilt2026,
   title =   {GAIA-v2-LILT: Multilingual Adaptation of Agent Benchmark beyond Translation},
   author =  {Yunsu Kim and Kaden Uhlig and Joern Wuebker},
-  journal = {arXiv preprint arXiv:2604.00000},
+  journal = {arXiv preprint arXiv:2604.24929},
   year =    {2026}
 }
 ```
